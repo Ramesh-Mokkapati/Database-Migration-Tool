@@ -1,0 +1,15 @@
+# Core (required)
+wxPython>=4.2
+SQLAlchemy>=2.0
+
+# Database drivers: install only the engines you use.
+pymysql                  # MySQL / MariaDB (mysql-connector-python also works)
+psycopg2-binary          # PostgreSQL, Amazon Redshift
+oracledb                 # Oracle (thin mode: no Instant Client needed)
+pyodbc                   # SQL Server (needs Microsoft ODBC Driver 17/18)
+# ibm_db ibm_db_sa       # IBM DB2 (needs a SQLAlchemy 2-compatible ibm_db_sa)
+# snowflake-sqlalchemy   # Snowflake
+# sqlalchemy-redshift    # Amazon Redshift
+
+# Packaging
+pyinstaller>=6.0

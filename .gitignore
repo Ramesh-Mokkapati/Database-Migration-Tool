@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+.venv-build/
+venv/
+
+# PyInstaller (keep DBMigrationTool.spec)
+build/
+dist/
+
+# Migration run output (logs, reports, extracted scripts)
+migration_output/
+
+# Local databases and job files (may contain hosts, users or data)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+job*.json
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,9 @@
+# Everything bundled into the released DBMigrationTool.exe.
+# Snowflake, Redshift and DB2 drivers are left out to keep the binary small; add them here to bundle them.
+wxPython==4.2.3
+SQLAlchemy==2.0.43
+pymysql==1.1.2
+psycopg2-binary==2.9.10
+oracledb==3.3.0
+pyodbc==5.2.0
+pyinstaller==6.16.0

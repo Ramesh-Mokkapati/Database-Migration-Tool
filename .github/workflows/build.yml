@@ -1,0 +1,153 @@
+name: Build and release
+
+# Pull requests and other branches: test, build, smoke-test, and keep the .exe as a workflow artifact.
+# Pushes to main/master: the same, then tag the commit with the next semantic version and publish a
+# GitHub Release (see scripts/next_version.sh for the bump rules). Pushing a v* tag by hand still
+# releases exactly that version, and "Run workflow" can force a patch/minor/major release.
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (auto = from commit messages)"
+        type: choice
+        options: [auto, patch, minor, major, none]
+        default: auto
+
+permissions:
+  contents: read
+
+# Release runs on a branch queue instead of being cancelled, so two pushes can't race for one version.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      release: ${{ steps.next.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # full history and tags, to find the previous release
+
+      - name: Determine version
+        id: next
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BUMP: ${{ inputs.bump || 'auto' }}
+          RUN: ${{ github.run_number }}
+        run: |
+          bash scripts/next_version.sh > next.env
+          cat next.env | tee -a "$GITHUB_OUTPUT"
+          source next.env
+          if [[ $release == true ]]; then
+            echo "### Releasing $tag (bump: $bump, previous: $previous)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Build $version (no release; bump: $bump, previous: $previous)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # The engine tests need only SQLAlchemy; the GUI is exercised by the exe smoke test.
+      - name: Install test dependencies
+        run: python -m pip install "SQLAlchemy>=2.0,<2.1"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    needs: [version, test]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Stamp version
+        shell: pwsh
+        run: |
+          (Get-Content dbmigrator/__init__.py) -replace '__version__ = ".*"', "__version__ = `"$env:VERSION`"" |
+            Set-Content dbmigrator/__init__.py -Encoding utf8
+          Write-Host "Building version $env:VERSION"
+
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean DBMigrationTool.spec
+
+      - name: Smoke-test executable
+        run: python scripts/smoke_test_exe.py dist/DBMigrationTool.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "DBMigrationTool-$env:VERSION-win64"
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist/DBMigrationTool.exe "release/$name.exe"
+          Compress-Archive -Path dist/DBMigrationTool.exe, README.md -DestinationPath "release/$name.zip"
+          # LF line endings so `sha256sum -c SHA256SUMS.txt` works on Linux / Git Bash.
+          $sums = Get-ChildItem release -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          }
+          [IO.File]::WriteAllText("$PWD/release/SHA256SUMS.txt", ($sums -join "`n") + "`n")
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: DBMigrationTool-${{ env.VERSION }}-win64
+          path: release/
+          if-no-files-found: error
+          retention-days: ${{ needs.version.outputs.release == 'true' && 90 || 14 }}
+
+  release:
+    if: needs.version.outputs.release == 'true'
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: DBMigrationTool-${{ needs.version.outputs.version }}-win64
+          path: release
+
+      # Creates the tag on this commit when it doesn't exist yet (automatic releases).
+      # Tags created with GITHUB_TOKEN don't trigger another workflow run, so nothing builds twice.
+      - name: Tag and publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: DBMigrationTool ${{ needs.version.outputs.tag }}
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
